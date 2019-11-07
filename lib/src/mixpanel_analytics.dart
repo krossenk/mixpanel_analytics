@@ -95,6 +95,9 @@ class MixpanelAnalytics {
   /// Default sha function to be used when none is provided.
   static String _defaultShaFn(value) => value;
 
+  /// Used to store name and time of timed events
+  Map<String, DateTime> _timedEvents = <String, DateTime>{};
+
   /// Used in case we want to remove the timer to send batched events.
   void dispose() {
     if (_batchTimer != null) {
@@ -184,8 +187,7 @@ class MixpanelAnalytics {
       throw ArgumentError.notNull('properties');
     }
 
-    var trackEvent = _createTrackEvent(
-        event, properties, time ?? DateTime.now(), ip, insertId);
+    var trackEvent = _createTrackEvent(event, properties, time ?? DateTime.now(), ip, insertId);
 
     if (isBatchMode) {
       _trackEvents.add(trackEvent);
@@ -219,8 +221,7 @@ class MixpanelAnalytics {
       throw ArgumentError.notNull('value');
     }
 
-    var engageEvent = _createEngageEvent(
-        operation, value, time ?? DateTime.now(), ip, ignoreTime, ignoreAlias);
+    var engageEvent = _createEngageEvent(operation, value, time ?? DateTime.now(), ip, ignoreTime, ignoreAlias);
 
     if (isBatchMode) {
       _engageEvents.add(engageEvent);
@@ -229,6 +230,11 @@ class MixpanelAnalytics {
 
     var base64Event = _base64Encoder(engageEvent);
     return _sendEngageEvent(base64Event);
+  }
+
+  void timeEvent(String eventName) {
+    assert(!_timedEvents.containsKey(eventName));
+    _timedEvents[eventName] = DateTime.now();
   }
 
   // Reads queued events from the storage when we are in batch mode.
@@ -266,8 +272,7 @@ class MixpanelAnalytics {
   }
 
   // As the API for Mixpanel only allows 50 events per batch, we need to restrict the events sent on each request.
-  int _getMaximumRange(int length) =>
-      length < maxEventsInBatchRequest ? length : maxEventsInBatchRequest;
+  int _getMaximumRange(int length) => length < maxEventsInBatchRequest ? length : maxEventsInBatchRequest;
 
   // Uploads all pending events in batches of maximum [maxEventsInBatchRequest].
   Future<void> _uploadEvents(List<dynamic> events, Function sendFn) async {
@@ -299,10 +304,15 @@ class MixpanelAnalytics {
       ...props,
       'token': _token,
       'time': time.millisecondsSinceEpoch,
-      'distinct_id': props['distinct_id'] == null ? _userId == null
-          ? 'Unknown'
-          : _shouldAnonymize ? _anonymize('userId', _userId) : _userId : props['distinct_id']
+      'distinct_id': props['distinct_id'] == null
+          ? _userId == null ? 'Unknown' : _shouldAnonymize ? _anonymize('userId', _userId) : _userId
+          : props['distinct_id']
     };
+
+    if (_timedEvents[event] != null) {
+      properties = {...properties, '\$duration': DateTime.now().difference(_timedEvents[event]).inSeconds};
+      _timedEvents.remove(event);
+    }
     if (ip != null) {
       properties = {...properties, 'ip': ip};
     }
@@ -314,20 +324,15 @@ class MixpanelAnalytics {
   }
 
   // The engage event is coded into base64 with the required properties.
-  Map<String, dynamic> _createEngageEvent(
-      MixpanelUpdateOperations operation,
-      Map<String, dynamic> value,
-      DateTime time,
-      String ip,
-      bool ignoreTime,
-      bool ignoreAlias) {
+  Map<String, dynamic> _createEngageEvent(MixpanelUpdateOperations operation, Map<String, dynamic> value, DateTime time,
+      String ip, bool ignoreTime, bool ignoreAlias) {
     var data = {
       updateOperations[operation]: value,
       '\$token': _token,
       '\$time': time.millisecondsSinceEpoch,
-      '\$distinct_id': value['distinct_id'] == null ? _userId == null
-          ? 'Unknown'
-          : _shouldAnonymize ? _anonymize('userId', _userId) : _userId : value['distinct_id']
+      '\$distinct_id': value['distinct_id'] == null
+          ? _userId == null ? 'Unknown' : _shouldAnonymize ? _anonymize('userId', _userId) : _userId
+          : value['distinct_id']
     };
     if (ip != null) {
       data = {...data, '\$ip': ip};
@@ -360,8 +365,7 @@ class MixpanelAnalytics {
       var response = await http.get(url, headers: {
         'Content-type': 'application/json',
       });
-      return response.statusCode == 200 &&
-          _validateResponseBody(url, response.body);
+      return response.statusCode == 200 && _validateResponseBody(url, response.body);
     } on Exception catch (error) {
       _onErrorHandler(error, 'Request error to $url');
       return false;
@@ -381,8 +385,7 @@ class MixpanelAnalytics {
       }, body: {
         'data': batch
       });
-      return response.statusCode == 200 &&
-          _validateResponseBody(url, response.body);
+      return response.statusCode == 200 && _validateResponseBody(url, response.body);
     } on Exception catch (error) {
       _onErrorHandler(error, 'Request error to $url');
       return false;
